@@ -1,10 +1,14 @@
+package com.example.aaron.audio;
+
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+import java.nio.ShortBuffer;
 
 public class AudioFileDecoder {
     private MediaExtractor mediaExtractor = new MediaExtractor();
@@ -41,16 +45,22 @@ public class AudioFileDecoder {
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         ByteArrayOutputStream stream = decode(info);
         byte[] bytes = stream.toByteArray();
-        FloatBuffer floatBuffer = ByteBuffer.wrap(bytes).asFloatBuffer();
-        float[] rawData = new float[floatBuffer.capacity()];
-        floatBuffer.get(rawData);
-        return rawData;
+
+        // first to short for 16 bit type
+        ShortBuffer shortBuffer = ByteBuffer.wrap(bytes).asShortBuffer();
+        short[] rawShortData = new short[shortBuffer.capacity()];
+        shortBuffer.get(rawShortData);
+
+        float[] floatData = new float[rawShortData.length];
+        for (int i = 0; i < rawShortData.length; i++)
+            floatData[i] = (float) rawShortData[i] / 0x8000;    // -1 to 1 floats
+        return floatData;
     }
 
     private ByteArrayOutputStream decode(MediaCodec.BufferInfo info) {
         if (mediaCodec == null)
             return null;
-        mediaCodec.start();	
+        mediaCodec.start();
         int inputBufferIndex;
         int outputBufferIndex = 0;
         ByteBuffer outputBuffer;
