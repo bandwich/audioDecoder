@@ -1,50 +1,65 @@
-package com.example.aaron.audio;
-
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Log;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
 
-public class AudioFileDecoder {
-    private MediaExtractor mediaExtractor = new MediaExtractor();
-    private MediaCodec mediaCodec;
+public class AudioCodec {
+    private File file;
+    private MediaExtractor mediaExtractor;
+    private MediaCodec mediaDecoder;
     private MediaFormat mediaFormat;
 
-    public AudioFileDecoder(String filename) {
+    public AudioCodec(File file) {
+        this.file = file;
         try {
-            mediaExtractor.setDataSource(filename);
+            mediaExtractor = new MediaExtractor();
+            mediaExtractor.setDataSource(file.getAbsolutePath());
         } catch (Exception err) {
             err.printStackTrace();
         }
         int numTracks = mediaExtractor.getTrackCount();
-        for (int i = 0; i < numTracks; i++) {
-            MediaFormat fileFormat = mediaExtractor.getTrackFormat(i);
-            String mime = fileFormat.getString(MediaFormat.KEY_MIME);
+        for (int i=0; i<numTracks; i++) {
+            mediaFormat = mediaExtractor.getTrackFormat(i);
+            String mime = mediaFormat.getString(MediaFormat.KEY_MIME);
             if (mime.startsWith("audio/")) {
                 mediaExtractor.selectTrack(i);
                 try {
-                    mediaCodec = MediaCodec.createDecoderByType(mime);
-                    mediaCodec.configure(fileFormat, null, null, 0);
-                    mediaFormat = fileFormat;
+                    mediaDecoder = MediaCodec.createDecoderByType(mime);
+                    mediaDecoder.configure(mediaFormat, null, null, 0);
                     break;
                 } catch (Exception err) {
                     err.printStackTrace();
                 }
             }
         }
-        if (mediaCodec == null)
+        if (mediaDecoder == null)
             throw new IllegalArgumentException("Invalid file format");
+    }
+
+    public int getSampleRate() {
+        return mediaFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+    }
+
+    public byte[] getRawByteData() {
+        return decode();
     }
 
     public float[] getRawFloatData() {
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-        ByteArrayOutputStream stream = decode(info);
-        byte[] bytes = stream.toByteArray();
+        byte[] bytes = decode();
 
         // first to short for 16 bit type
         ShortBuffer shortBuffer = ByteBuffer.wrap(bytes).asShortBuffer();
@@ -57,43 +72,56 @@ public class AudioFileDecoder {
         return floatData;
     }
 
-    private ByteArrayOutputStream decode(MediaCodec.BufferInfo info) {
-        if (mediaCodec == null)
+    private byte[] decode() {
+        byte bytes[] = new byte[ (int) file.length()];
+        Log.d("File length", String.valueOf(bytes.length));
+        try {
+            BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file));
+            DataInputStream dis = new DataInputStream(bis);
+            dis.readFully(bytes);
+        }
+        catch (Exception err) { err.printStackTrace(); }
+        return bytes;
+    }
+
+    // having issues with a lot of mp3 files
+    private ByteArrayOutputStream decodeWithCodec(MediaCodec.BufferInfo info) {
+        if (mediaDecoder == null)
             return null;
-        mediaCodec.start();
+        mediaDecoder.start();
         int inputBufferIndex;
-        int outputBufferIndex = 0;
+        int outputBufferIndex;
         ByteBuffer outputBuffer;
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         int sampleSize = 0;
         while (sampleSize != -1) {
             // while there are more samples to be read, read samples from mediaExtractor into mediaCodec
-            inputBufferIndex = mediaCodec.dequeueInputBuffer(30000);
+            inputBufferIndex = mediaDecoder.dequeueInputBuffer(30000);
             if (inputBufferIndex >= 0)
-                sampleSize = mediaExtractor.readSampleData(mediaCodec.getInputBuffer(inputBufferIndex), 0);
+                sampleSize = mediaExtractor.readSampleData(mediaDecoder.getInputBuffer(inputBufferIndex), 0);
             if (sampleSize != -1) {
-                mediaCodec.queueInputBuffer(inputBufferIndex, 0, sampleSize, mediaExtractor.getSampleTime(), 0);
+                mediaDecoder.queueInputBuffer(inputBufferIndex, 0, sampleSize, mediaExtractor.getSampleTime(), 0);
                 mediaExtractor.advance();
             }
-            else mediaCodec.queueInputBuffer(inputBufferIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+            else mediaDecoder.queueInputBuffer(inputBufferIndex, 0, 0,0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
 
             // output data from mediaCodec
-            outputBufferIndex = mediaCodec.dequeueOutputBuffer(info, 30000);
+            outputBufferIndex = mediaDecoder.dequeueOutputBuffer(info, 30000);
             if (outputBufferIndex >= 0) {
                 // end of file
                 if (info.flags != 0) {
-                    mediaCodec.stop();
-                    mediaCodec.release();
-                    mediaCodec = null;
+                    mediaDecoder.stop();
+                    mediaDecoder.release();
+                    mediaDecoder = null;
                     return null;
                 }
-                outputBuffer = mediaCodec.getOutputBuffer(outputBufferIndex);
-                byte[] decodedData = new byte[outputBuffer.remaining()];
+                outputBuffer = mediaDecoder.getOutputBuffer(outputBufferIndex);
+                byte[] decodedData = new byte[info.size - info.offset];
                 outputBuffer.get(decodedData);
-                outputBuffer.clear();
                 for (byte b : decodedData)
                     outputStream.write(b);
-                mediaCodec.releaseOutputBuffer(outputBufferIndex, false);
+                outputBuffer.clear();
+                mediaDecoder.releaseOutputBuffer(outputBufferIndex, false);
             }
         }
         return outputStream;
