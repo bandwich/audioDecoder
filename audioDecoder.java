@@ -54,12 +54,13 @@ public class AudioCodec {
     }
 
     public byte[] getRawByteData() {
-        return decode();
+        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+        return decodeWithCodec(info).toByteArray();
     }
 
     public float[] getRawFloatData() {
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-        byte[] bytes = decode();
+        byte[] bytes = decodeWithCodec(info).toByteArray();
 
         // first to short for 16 bit type
         ShortBuffer shortBuffer = ByteBuffer.wrap(bytes).asShortBuffer();
@@ -72,9 +73,18 @@ public class AudioCodec {
         return floatData;
     }
 
-    private byte[] decode() {
+    public void saveBytesAsFile(byte[] bytes, String filename) {
+        File newFile = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC).getAbsolutePath() + "/" + filename + ".mp3");
+        try {
+            FileOutputStream fos = new FileOutputStream(newFile);
+            fos.write(bytes);
+            fos.flush();
+            fos.close();
+        } catch (Exception err) { err.printStackTrace(); }
+    }
+
+    private byte[] getDirectBytes() {
         byte bytes[] = new byte[ (int) file.length()];
-        Log.d("File length", String.valueOf(bytes.length));
         try {
             BufferedInputStream bis = new BufferedInputStream(new FileInputStream(file));
             DataInputStream dis = new DataInputStream(bis);
@@ -84,7 +94,6 @@ public class AudioCodec {
         return bytes;
     }
 
-    // having issues with a lot of mp3 files
     private ByteArrayOutputStream decodeWithCodec(MediaCodec.BufferInfo info) {
         if (mediaDecoder == null)
             return null;
@@ -96,7 +105,7 @@ public class AudioCodec {
         int sampleSize = 0;
         while (sampleSize != -1) {
             // while there are more samples to be read, read samples from mediaExtractor into mediaCodec
-            inputBufferIndex = mediaDecoder.dequeueInputBuffer(30000);
+            inputBufferIndex = mediaDecoder.dequeueInputBuffer(10000);
             if (inputBufferIndex >= 0)
                 sampleSize = mediaExtractor.readSampleData(mediaDecoder.getInputBuffer(inputBufferIndex), 0);
             if (sampleSize != -1) {
@@ -106,7 +115,7 @@ public class AudioCodec {
             else mediaDecoder.queueInputBuffer(inputBufferIndex, 0, 0,0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
 
             // output data from mediaCodec
-            outputBufferIndex = mediaDecoder.dequeueOutputBuffer(info, 30000);
+            outputBufferIndex = mediaDecoder.dequeueOutputBuffer(info, 10000);
             if (outputBufferIndex >= 0) {
                 // end of file
                 if (info.flags != 0) {
