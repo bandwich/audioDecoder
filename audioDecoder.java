@@ -2,7 +2,6 @@ import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.os.Environment;
-import android.provider.MediaStore;
 import android.util.Log;
 
 import java.io.BufferedInputStream;
@@ -12,8 +11,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
 
 public class AudioCodec {
@@ -53,26 +50,38 @@ public class AudioCodec {
         return mediaFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE);
     }
 
-    public byte[] getRawByteData() {
+    public int getChannelCount() {
+        return mediaFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+    }
+
+    public byte[] getRawBytes() {
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         return decodeWithCodec(info).toByteArray();
     }
 
-    public float[] getRawFloatData() {
+    // takes channel and returns samples in that channel as float
+    public float[] getSamplesAsFloat(int channel) {
+        if (channel > mediaFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) || channel < 0)
+            throw new IllegalArgumentException("Channel out of bounds");
+
+        int numChannels = mediaFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         byte[] bytes = decodeWithCodec(info).toByteArray();
 
-        // first to short for 16 bit type
-        ShortBuffer shortBuffer = ByteBuffer.wrap(bytes).asShortBuffer();
-        short[] rawShortData = new short[shortBuffer.capacity()];
-        shortBuffer.get(rawShortData);
+        // first convert to short for 16 bit ints ( byte order not modified ), all channels still interleaved
+        ShortBuffer samples = ByteBuffer.wrap(bytes).asShortBuffer();
+        short[] rawShortSamples = new short[samples.remaining()];
+        samples.get(rawShortSamples);
 
-        float[] floatData = new float[rawShortData.length];
-        for (int i = 0; i < rawShortData.length; i++)
-            floatData[i] = (float) rawShortData[i] / 0x8000;    // -1 to 1 floats
-        return floatData;
+        // return samples in specified channel as float
+        float[] floatSamples = new float[rawShortSamples.length / numChannels];
+        for (int i = 0; i < floatSamples.length; i++)
+            floatSamples[i] = (float) rawShortSamples[i * numChannels + channel] / 0x8000;    // floats in range -1 to 1
+        return floatSamples;
     }
 
+    // assumes bytes are already encoded
+    // saves file to public music directory
     public void saveBytesAsFile(byte[] bytes, String filename) {
         File newFile = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC).getAbsolutePath() + "/" + filename + ".mp3");
         try {
@@ -94,6 +103,8 @@ public class AudioCodec {
         return bytes;
     }
 
+    // decoder returns raw PCM data
+    // if stereo, samples are interleaved
     private ByteArrayOutputStream decodeWithCodec(MediaCodec.BufferInfo info) {
         if (mediaDecoder == null)
             return null;
@@ -125,6 +136,8 @@ public class AudioCodec {
                     return null;
                 }
                 outputBuffer = mediaDecoder.getOutputBuffer(outputBufferIndex);
+                outputBuffer.position(info.offset);
+                outputBuffer.limit(info.size + info.offset);
                 byte[] decodedData = new byte[info.size - info.offset];
                 outputBuffer.get(decodedData);
                 for (byte b : decodedData)
@@ -133,6 +146,7 @@ public class AudioCodec {
                 mediaDecoder.releaseOutputBuffer(outputBufferIndex, false);
             }
         }
+        mediaDecoder.stop();
         return outputStream;
     }
 }
